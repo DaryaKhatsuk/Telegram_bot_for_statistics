@@ -59,32 +59,50 @@ async def aggregate_payments(dt_from, dt_upto, group_type):
     # Определение временных интервалов для агрегации
     dt_from = datetime.fromisoformat(dt_from)
     dt_upto = datetime.fromisoformat(dt_upto)
-    interval = {'hour': 'hour', 'day': '%Y-%m-%d', 'month': '%Y-%m'}[group_type]
 
-    # Агрегация данных в MongoDB
+    print('dt_from, dt_upto', dt_from, dt_upto)
+    print(group_type)
+    # interval = {'hour': '%H:%M:%S', 'day': '%Y-%m-%dT%H:%M:%S', 'month': '%Y-%m'}[group_type]
+    # print('interval', interval)
+    date_formats = {
+        "year": "%Y", "month": "%Y-%m", "day": "%Y-%m-%d", "hour": "%Y-%m-%dT%H", "minute": "%Y-%m-%dT%H:%M:%S"
+    }
+    # date_formats = ["%Y", "%Y-%m", "%Y-%m-%d", "%Y-%m-%dT%H", "%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"]
+    if date_formats.get(group_type):
+        print(date_formats.get(group_type))
+        date_for = date_formats.get(group_type)
+    else:
+        date_for = "%Y-%m-%dT%H:%M:%S"
     pipeline = [
-        {
-            '$match': {
-                'date': {'$gte': dt_from, '$lte': dt_upto}
+        {"$match": {"dt": {"$gte": dt_from, "$lte": dt_upto}}},
+        {"$group": {
+            "_id": {
+            "$dateToString": {
+                "format": date_for,
+                "date": "$dt"
             }
         },
-        {
-            '$group': {
-                '_id': {'$dateToString': {'format': interval, 'date': '$date'}},
-                'total_amount': {'$sum': '$amount'}
-            }
-        },
-        {
-            '$sort': {'_id': 1}
-        }
+            "total_value": {"$sum": "$value"}
+        }},
+        {"$sort": {"_id": 1}}
     ]
+    print(pipeline)
 
-    aggregated_data = collection.aggregate(pipeline)
-
+    aggregated_data = list(collection.aggregate(pipeline))
+    print(aggregated_data)
     # Форматирование результатов агрегации
-    dataset = [item['total_amount'] for item in aggregated_data]
-    labels = [item['_id'] for item in aggregated_data]
+    dataset = [item['total_value'] for item in aggregated_data]
 
+    labels = []
+    for item in aggregated_data:
+        for data_type, form in date_formats.items():
+            try:
+                dt = datetime.strptime(item['_id'], form)
+                labels.append(dt.strftime('%Y-%m%dT%H:%M:%S'))
+                break
+            except ValueError:
+                continue
+    print(dataset, labels)
     return {'dataset': dataset, 'labels': labels}
 
 
@@ -93,12 +111,14 @@ async def handle_message(message: types.Message):
     try:
         # Парсинг JSON из текста сообщения
         data = json.loads(message.text)
-
+        print(data)
         # Вызов агрегации данных
         result = await aggregate_payments(data['dt_from'], data['dt_upto'], data['group_type'])
+        print(result)
 
         # Отправка ответа пользователю
-        await message.reply(json.dumps(result, indent=4), parse_mode=ParseMode.MARKDOWN)
+        await message.answer(json.dumps(result, indent=4), parse_mode=ParseMode.MARKDOWN)
+        # await message.answer(json.dumps(result, indent=4), parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         await message.reply(f'Error: {e}')
 
